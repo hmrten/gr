@@ -28,20 +28,17 @@ enum {
   GR_KEY_F11, GR_KEY_F12, GR_KEY_M1, GR_KEY_M2, GR_KEY_M3, GR_KEY_M4, GR_KEY_M5
 };
 
-struct gr_sys;
-
 struct gr_ctx {
-  struct gr_sys *sys;
-  void          *mem;
-  void          *fb;
-  u32            xres;
-  u32            yres;
-  u32            xwin;
-  u32            ywin;
-  double         time;
-  double         dt;
-  void         (*config)(struct gr_ctx *, size_t, u32, u32, const char *);
-  u32          (*event)(struct gr_ctx *, u32 *);
+  void  *mem;
+  void  *fb;
+  u32    xres;
+  u32    yres;
+  u32    xwin;
+  u32    ywin;
+  double time;
+  double dt;
+  void (*config)(struct gr_ctx *, size_t, u32, u32, const char *);
+  u32  (*event)(struct gr_ctx *, u32 *);
 };
 
 int gr_setup(struct gr_ctx *, int, char **);
@@ -51,7 +48,7 @@ int gr_frame(struct gr_ctx *);
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-struct gr_sys {
+static struct {
   WNDCLASS wc;
   HWND     hw;
   HDC      dc;
@@ -59,18 +56,18 @@ struct gr_sys {
   u32      qhead;
   u32      qdata[256][2];
   u32      qtail;
-};
+} gr_w32;
 
 static void gr_w32_wintext(struct gr_ctx *gr, const char *text)
 {
-  HWND hw = gr->sys->hw;
+  HWND hw = gr_w32.hw;
   _ReadWriteBarrier();
   SetWindowTextA(hw, text);
 }
 
 static void gr_w32_winsize(struct gr_ctx *gr, u32 x, u32 y)
 {
-  HWND hw = gr->sys->hw;
+  HWND hw = gr_w32.hw;
   RECT r = {0, 0, (LONG)x, (LONG)y};
   _ReadWriteBarrier();
   AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, 0);
@@ -91,33 +88,31 @@ static void gr_w32_config(struct gr_ctx *gr, size_t memsz, u32 xres, u32 yres,
 
 static int gr_w32_addevent(struct gr_ctx *gr, u32 ev, u32 ep)
 {
-  struct gr_sys *sys = gr->sys;
-  u32 head = sys->qhead;
-  u32 tail = sys->qtail;
+  u32 head = gr_w32.qhead;
+  u32 tail = gr_w32.qtail;
   u32 ntail = (tail+1) & 255;
 
   _ReadWriteBarrier();
   if (ntail == head) return 0;
-  sys->qdata[tail][0] = ev;
-  sys->qdata[tail][1] = ep;
+  gr_w32.qdata[tail][0] = ev;
+  gr_w32.qdata[tail][1] = ep;
   _ReadWriteBarrier();
-  sys->qtail = ntail;
+  gr_w32.qtail = ntail;
   return 1;
 }
 
 static u32 gr_w32_event(struct gr_ctx *gr, u32 *ep)
 {
-  struct gr_sys *sys = gr->sys;
-  u32 head = sys->qhead;
-  u32 tail = sys->qtail;
+  u32 head = gr_w32.qhead;
+  u32 tail = gr_w32.qtail;
   u32 ev;
 
   _ReadWriteBarrier();
   if (head == tail) return 0;
-  ev  = sys->qdata[head][0];
-  *ep = sys->qdata[head][1];
+  ev  = gr_w32.qdata[head][0];
+  *ep = gr_w32.qdata[head][1];
   _ReadWriteBarrier();
-  sys->qhead = (head+1) & 255;
+  gr_w32.qhead = (head+1) & 255;
 
   return ev;
 }
@@ -136,12 +131,9 @@ static LRESULT CALLBACK gr_w32_winproc(HWND hw, UINT msg, WPARAM wp, LPARAM lp)
     GR_KEY_F4, GR_KEY_F5, GR_KEY_F6, GR_KEY_F7, GR_KEY_F8, GR_KEY_F9,
     GR_KEY_F10, GR_KEY_F11, GR_KEY_F12
   };
-  static struct gr_ctx *gr;
   u32 ev=0, ep=0;
 
   switch (msg) {
-  case WM_NCCREATE:    gr = ((CREATESTRUCT *)lp)->lpCreateParams;
-                       return TRUE;
   case WM_SYSKEYUP:
   case WM_SYSKEYDOWN:  if ((lp&(1<<29)) && !(lp&(1<<31)) && wp == VK_F4) {
                          PostQuitMessage(0);
@@ -160,13 +152,13 @@ static LRESULT CALLBACK gr_w32_winproc(HWND hw, UINT msg, WPARAM wp, LPARAM lp)
   case WM_MBUTTONDOWN: ep = GR_KEY_M2; goto mdown;
   case WM_RBUTTONDOWN: ep = GR_KEY_M3; goto mdown;
   case WM_MOUSEWHEEL:  ep = ((int)wp>>16) / WHEEL_DELTA > 0 ? GR_KEY_M4 : GR_KEY_M5;
-                       gr_w32_addevent(gr, GR_EV_KEYDOWN, ep);
-                       gr_w32_addevent(gr, GR_EV_KEYUP, ep);
+                       gr_w32_addevent(0, GR_EV_KEYDOWN, ep);
+                       gr_w32_addevent(0, GR_EV_KEYUP, ep);
                        return 0;
   case WM_MOUSEMOVE:   ev = GR_EV_MOUSE;
                        ep = (u32)lp;
                        goto event;
-  case WM_SIZE:       _ReadWriteBarrier(); gr->sys->winsz = (u32)lp; return 0;
+  case WM_SIZE:       _ReadWriteBarrier(); gr_w32.winsz = (u32)lp; return 0;
   case WM_ERASEBKGND: return 1;
   case WM_CLOSE:      PostQuitMessage(0); return 0;
   }
@@ -176,33 +168,32 @@ mup:
 mdown:
   ev = GR_EV_KEYDOWN;
 event:
-  gr_w32_addevent(gr, ev, ep);
+  gr_w32_addevent(0, ev, ep);
   return 0;
 }
 
 static DWORD WINAPI gr_w32_winloop(void *arg)
 {
   struct gr_ctx *gr = arg;
-  struct gr_sys *sys = gr->sys;
   RECT r = { 0, 0, (LONG)gr->xres, (LONG)gr->yres };
   MSG msg;
 
-  sys->wc.style = CS_VREDRAW | CS_HREDRAW | CS_OWNDC;
-  sys->wc.lpfnWndProc = gr_w32_winproc;
-  sys->wc.cbWndExtra = (int)(sizeof *gr);
-  sys->wc.hInstance = GetModuleHandle(0);
-  sys->wc.hIcon = LoadIcon(0, IDI_APPLICATION);
-  sys->wc.hCursor = LoadCursor(0, IDC_ARROW);
-  sys->wc.lpszClassName = "gr";
-  RegisterClass(&sys->wc);
+  gr_w32.wc.style = CS_VREDRAW | CS_HREDRAW | CS_OWNDC;
+  gr_w32.wc.lpfnWndProc = gr_w32_winproc;
+  gr_w32.wc.cbWndExtra = (int)sizeof(struct gr_ctx *);
+  gr_w32.wc.hInstance = GetModuleHandle(0);
+  gr_w32.wc.hIcon = LoadIcon(0, IDI_APPLICATION);
+  gr_w32.wc.hCursor = LoadCursor(0, IDC_ARROW);
+  gr_w32.wc.lpszClassName = "gr";
+  RegisterClass(&gr_w32.wc);
 
   AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, 0);
   r.right -= r.left, r.bottom -= r.top;
-  sys->hw = CreateWindow("gr", "gr", WS_OVERLAPPEDWINDOW|WS_VISIBLE,
-                         CW_USEDEFAULT, CW_USEDEFAULT, r.right, r.bottom,
-                         0, 0, sys->wc.hInstance, gr);
+  gr_w32.hw = CreateWindow("gr", "gr", WS_OVERLAPPEDWINDOW|WS_VISIBLE,
+                           CW_USEDEFAULT, CW_USEDEFAULT, r.right, r.bottom,
+                           0, 0, gr_w32.wc.hInstance, gr);
   _ReadWriteBarrier();
-  sys->dc = GetDC(sys->hw);
+  gr_w32.dc = GetDC(gr_w32.hw);
 
   while (GetMessage(&msg, 0, 0, 0) > 0) {
     TranslateMessage(&msg);
@@ -215,9 +206,7 @@ static DWORD WINAPI gr_w32_winloop(void *arg)
 int main(int argc, char **argv)
 {
   static BITMAPINFO bi = { sizeof(BITMAPINFOHEADER), 0, 0, 1, 32 };
-  static struct gr_sys sys;
   static struct gr_ctx gr = {
-    .sys = &sys,
     .config = gr_w32_config,
     .event = gr_w32_event,
   };
@@ -241,11 +230,11 @@ int main(int argc, char **argv)
 
   do {
     _mm_pause();
-    dc = sys.dc;
+    dc = gr_w32.dc;
     _ReadWriteBarrier();
   } while (!dc);
 
-  hw = gr.sys->hw;
+  hw = gr_w32.hw;
   _ReadWriteBarrier();
 
   QueryPerformanceCounter(&tbase);
@@ -257,7 +246,7 @@ int main(int argc, char **argv)
     gr.dt = invfreq * (tnow.QuadPart - tlast.QuadPart);
     tlast = tnow;
 
-    xwin = gr.sys->winsz;
+    xwin = gr_w32.winsz;
     _ReadWriteBarrier();
     ywin = xwin >> 16;
     xwin &= 0xFFFF;
