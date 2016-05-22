@@ -85,9 +85,12 @@ static void gr_w32_config(struct gr_ctx *gr, size_t memsz, u32 xres, u32 yres,
   gr->mem = VirtualAlloc(0, memsz, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE);
   gr->xres = xres;
   gr->yres = yres;
+
+  gr_w32_winsize(0, xres, yres);
+  gr_w32_wintext(0, title);
 }
 
-static int gr_w32_addevent(struct gr_ctx *gr, u32 ev, u32 ep)
+static int gr_w32_addevent(u32 ev, u32 ep)
 {
   u32 head = gr_w32.qhead;
   u32 tail = gr_w32.qtail;
@@ -153,8 +156,8 @@ static LRESULT CALLBACK gr_w32_winproc(HWND hw, UINT msg, WPARAM wp, LPARAM lp)
   case WM_MBUTTONDOWN: ep = GR_KEY_M2; goto mdown;
   case WM_RBUTTONDOWN: ep = GR_KEY_M3; goto mdown;
   case WM_MOUSEWHEEL:  ep = ((int)wp>>16) / WHEEL_DELTA > 0 ? GR_KEY_M4 : GR_KEY_M5;
-                       gr_w32_addevent(0, GR_EV_KEYDOWN, ep);
-                       gr_w32_addevent(0, GR_EV_KEYUP, ep);
+                       gr_w32_addevent(GR_EV_KEYDOWN, ep);
+                       gr_w32_addevent(GR_EV_KEYUP, ep);
                        return 0;
   case WM_MOUSEMOVE:   ev = GR_EV_MOUSE;
                        ep = (u32)lp;
@@ -169,30 +172,25 @@ mup:
 mdown:
   ev = GR_EV_KEYDOWN;
 event:
-  gr_w32_addevent(0, ev, ep);
+  gr_w32_addevent(ev, ep);
   return 0;
 }
 
 static DWORD WINAPI gr_w32_winloop(void *arg)
 {
-  struct gr_ctx *gr = arg;
-  RECT r = { 0, 0, (LONG)gr->xres, (LONG)gr->yres };
   MSG msg;
 
   gr_w32.wc.style = CS_VREDRAW | CS_HREDRAW | CS_OWNDC;
   gr_w32.wc.lpfnWndProc = gr_w32_winproc;
-  gr_w32.wc.cbWndExtra = (int)sizeof(struct gr_ctx *);
   gr_w32.wc.hInstance = GetModuleHandle(0);
   gr_w32.wc.hIcon = LoadIcon(0, IDI_APPLICATION);
   gr_w32.wc.hCursor = LoadCursor(0, IDC_ARROW);
   gr_w32.wc.lpszClassName = "gr";
   RegisterClass(&gr_w32.wc);
 
-  AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, 0);
-  r.right -= r.left, r.bottom -= r.top;
   gr_w32.hw = CreateWindow("gr", "gr", WS_OVERLAPPEDWINDOW|WS_VISIBLE,
-                           CW_USEDEFAULT, CW_USEDEFAULT, r.right, r.bottom,
-                           0, 0, gr_w32.wc.hInstance, gr);
+                           CW_USEDEFAULT, CW_USEDEFAULT, 320, 200,
+                           0, 0, gr_w32.wc.hInstance, 0);
   _ReadWriteBarrier();
   gr_w32.dc = GetDC(gr_w32.hw);
 
@@ -200,7 +198,7 @@ static DWORD WINAPI gr_w32_winloop(void *arg)
     TranslateMessage(&msg);
     DispatchMessage(&msg);
   }
-  gr_w32_addevent(gr, GR_EV_WINSHUT, 0);
+  gr_w32_addevent(GR_EV_WINSHUT, 0);
   return 0;
 }
 
@@ -219,13 +217,7 @@ int main(int argc, char **argv)
   u32 xwin, ywin;
   int ret;
 
-  if (gr_setup(&gr, argc, argv) != 0)
-    return 1;
-
-  bi.bmiHeader.biWidth = (LONG)gr.xres;
-  bi.bmiHeader.biHeight = -(LONG)gr.yres;
-
-  CreateThread(0, 0, gr_w32_winloop, &gr, 0, 0);
+  CreateThread(0, 0, gr_w32_winloop, 0, 0, 0);
 
   QueryPerformanceFrequency(&tnow);
   invfreq = 1.0 / (double)tnow.QuadPart;
@@ -238,6 +230,12 @@ int main(int argc, char **argv)
 
   hw = gr_w32.hw;
   _ReadWriteBarrier();
+
+  if (gr_setup(&gr, argc, argv) != 0)
+    return 1;
+
+  bi.bmiHeader.biWidth = (LONG)gr.xres;
+  bi.bmiHeader.biHeight = -(LONG)gr.yres;
 
   QueryPerformanceCounter(&tbase);
   tlast.QuadPart = 0;
