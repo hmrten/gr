@@ -39,6 +39,7 @@ struct gr_ctx {
   double dt;
   void (*config)(struct gr_ctx *, size_t, u32, u32, const char *);
   u32  (*event)(struct gr_ctx *, u32 *);
+  void (*winsize)(struct gr_ctx *, u32, u32);
 };
 
 int gr_setup(struct gr_ctx *, int, char **);
@@ -209,6 +210,7 @@ int main(int argc, char **argv)
   static struct gr_ctx gr = {
     .config = gr_w32_config,
     .event = gr_w32_event,
+    .winsize = gr_w32_winsize
   };
   LARGE_INTEGER tbase, tlast, tnow;
   double invfreq;
