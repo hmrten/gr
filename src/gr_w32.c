@@ -244,7 +244,7 @@ int main(int argc, char **argv)
   _ReadWriteBarrier();
 
   if ((ret = wgr.setup((struct gr_ctx *)&wgr, argc, argv)) != 0)
-    goto quit;
+    return ret;
 
   bi.bmiHeader.biWidth = (LONG)wgr.xres;
   bi.bmiHeader.biHeight = -(LONG)wgr.yres;
@@ -269,18 +269,10 @@ int main(int argc, char **argv)
     gr_w32_reload(&wgr, dllfile, tmpfile);
 
     if ((ret = wgr.frame((struct gr_ctx *)&wgr)) != 0)
-      goto quit;
+      return ret;
 
     StretchDIBits(dc, 0, 0, xwin, ywin, 0, 0, wgr.xres, wgr.yres, wgr.fb, &bi,
                   DIB_RGB_COLORS, SRCCOPY);
     ValidateRect(hw, 0);
   }
-
-quit:
-  /*if (tmpcreated) {
-    if (wgr.dll)
-      FreeLibrary(wgr.dll);
-    DeleteFileA(tmpfile);
-  }*/
-  return ret;
 }
