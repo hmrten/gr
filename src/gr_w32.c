@@ -169,20 +169,20 @@ static DWORD WINAPI gr_w32_winloop(void *arg)
   return 0;
 }
 
-static void gr_w32_getpaths(const char *dllname, char *dllfile, char *tmpfile)
+static void gr_w32_getpaths(const char *dllname, char *dllfile, char *dlltmpfile)
 {
   DWORD n = GetModuleFileNameA(GetModuleHandle(0), dllfile, MAX_PATH);
   dllfile[MAX_PATH-1] = 0;
   while (n > 1 && dllfile[n] != '\\') --n;
   dllfile[n] = 0;
-  GetTempFileNameA(dllfile, "gr", 0, tmpfile);
+  GetTempFileNameA(dllfile, "gr", 0, dlltmpfile);
   dllfile[n++] = '\\';
   while (*dllname && n < MAX_PATH-1) dllfile[n++] = *dllname++;
   dllfile[n] = 0;
 }
 
 static void gr_w32_reload(struct gr_w32_ctx *wgr, const char *dllfile,
-                          const char *tmpfile)
+                          const char *dlltmpfile)
 {
   static FILETIME savedtime;
   WIN32_FIND_DATA fd;
@@ -196,8 +196,8 @@ static void gr_w32_reload(struct gr_w32_ctx *wgr, const char *dllfile,
     savedtime = fd.ftLastWriteTime;
     if (wgr->dll)
       FreeLibrary(wgr->dll);
-    CopyFile(dllfile, tmpfile, 0);
-    wgr->dll = LoadLibrary(tmpfile);
+    CopyFile(dllfile, dlltmpfile, 0);
+    wgr->dll = LoadLibrary(dlltmpfile);
     wgr->setup = (gr_setup_t)GetProcAddress(wgr->dll, "gr_setup");
     wgr->frame = (gr_frame_t)GetProcAddress(wgr->dll, "gr_frame");
   }
@@ -219,15 +219,15 @@ int main(int argc, char **argv)
   u32 xwin, ywin;
   int ret = 0;
   char dllfile[MAX_PATH];
-  char tmpfile[MAX_PATH];
+  char dlltmpfile[MAX_PATH];
 
   if (argc < 2) {
     puts("usage: dllfile");
     return 1;
   }
 
-  gr_w32_getpaths(argv[1], dllfile, tmpfile);
-  gr_w32_reload(&wgr, dllfile, tmpfile);
+  gr_w32_getpaths(argv[1], dllfile, dlltmpfile);
+  gr_w32_reload(&wgr, dllfile, dlltmpfile);
 
   CreateThread(0, 0, gr_w32_winloop, &wgr, 0, 0);
 
@@ -266,7 +266,7 @@ int main(int argc, char **argv)
     wgr.xwin = xwin;
     wgr.ywin = ywin;
 
-    gr_w32_reload(&wgr, dllfile, tmpfile);
+    gr_w32_reload(&wgr, dllfile, dlltmpfile);
 
     if ((ret = wgr.frame((struct gr_ctx *)&wgr)) != 0)
       return ret;
