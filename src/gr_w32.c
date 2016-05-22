@@ -1,56 +1,16 @@
-/* gr.h
- * Written in 2016 by Mårten Hansson <hmrten@gmail.com>
- * License: Public domain */
-
-#include <stddef.h>
-#include <stdint.h>
-
-typedef int8_t    i8;
-typedef uint8_t   u8;
-typedef int16_t  i16;
-typedef uint16_t u16;
-typedef int32_t  i32;
-typedef uint32_t u32;
-typedef int64_t  i64;
-typedef uint64_t u64;
-
-enum {
-  /* return codes */
-  GR_EXIT=1,
-  /* events */
-  GR_EV_WINSHUT = 1, GR_EV_KEYDOWN, GR_EV_KEYUP, GR_EV_KEYCHAR, GR_EV_MOUSE,
-  /* keycodes ('0'..'9' and 'a'..'z' as lowercase ascii) */
-  GR_KEY_BACK=8, GR_KEY_TAB=9, GR_KEY_RET=13, GR_KEY_ESC=27, GR_KEY_SPACE=32,
-  GR_KEY_CTRL=128, GR_KEY_SHIFT, GR_KEY_ALT, GR_KEY_UP, GR_KEY_DOWN,
-  GR_KEY_LEFT, GR_KEY_RIGHT, GR_KEY_INS, GR_KEY_DEL, GR_KEY_HOME, GR_KEY_END,
-  GR_KEY_PGUP, GR_KEY_PGDN, GR_KEY_F1, GR_KEY_F2, GR_KEY_F3, GR_KEY_F4,
-  GR_KEY_F5, GR_KEY_F6, GR_KEY_F7, GR_KEY_F8, GR_KEY_F9, GR_KEY_F10,
-  GR_KEY_F11, GR_KEY_F12, GR_KEY_M1, GR_KEY_M2, GR_KEY_M3, GR_KEY_M4, GR_KEY_M5
-};
-
-struct gr_ctx {
-  void  *mem;
-  void  *fb;
-  u32    xres;
-  u32    yres;
-  u32    xwin;
-  u32    ywin;
-  double time;
-  double dt;
-  void (*config)(struct gr_ctx *, size_t, u32, u32, const char *);
-  u32  (*event)(struct gr_ctx *, u32 *);
-  void (*winsize)(struct gr_ctx *, u32, u32);
-};
-
-int gr_setup(struct gr_ctx *, int, char **);
-int gr_frame(struct gr_ctx *);
-
-#ifdef GR_IMPL
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <stdio.h>
+#include "gr.h"
+
+typedef int (*gr_setup_t)(struct gr_ctx *, int, char **);
+typedef int (*gr_frame_t)(struct gr_ctx *);
 
 struct gr_w32_ctx {
   struct gr_ctx;
+  HMODULE  dll;
+  int    (*setup)(struct gr_ctx *, int, char **);
+  int    (*frame)(struct gr_ctx *);
   WNDCLASS wc;
   HWND     hw;
   HDC      dc;
@@ -209,6 +169,41 @@ static DWORD WINAPI gr_w32_winloop(void *arg)
   return 0;
 }
 
+static void gr_w32_getpaths(const char *dllname, char *dllfile, char *tmpfile)
+{
+  DWORD n = GetModuleFileNameA(GetModuleHandle(0), dllfile, MAX_PATH);
+  dllfile[MAX_PATH-1] = 0;
+  while (n > 1 && dllfile[n] != '\\') --n;
+  dllfile[n] = 0;
+  GetTempFileNameA(dllfile, "gr", 0, tmpfile);
+  dllfile[n++] = '\\';
+  while (*dllname && n < MAX_PATH-1) dllfile[n++] = *dllname++;
+  dllfile[n] = 0;
+}
+
+static void gr_w32_reload(struct gr_w32_ctx *wgr, const char *dllfile,
+                          const char *tmpfile)
+{
+  static FILETIME savedtime;
+  WIN32_FIND_DATA fd;
+  HANDLE h;
+
+  if (GetFileAttributes("pdb.lock") != INVALID_FILE_ATTRIBUTES) return;
+  if ((h = FindFirstFile(dllfile, &fd)) == INVALID_HANDLE_VALUE) return;
+
+  if (CompareFileTime(&fd.ftLastWriteTime, &savedtime) > 0) {
+    printf("reloading: %s\n", dllfile);
+    savedtime = fd.ftLastWriteTime;
+    if (wgr->dll)
+      FreeLibrary(wgr->dll);
+    CopyFile(dllfile, tmpfile, 0);
+    wgr->dll = LoadLibrary(tmpfile);
+    wgr->setup = (gr_setup_t)GetProcAddress(wgr->dll, "gr_setup");
+    wgr->frame = (gr_frame_t)GetProcAddress(wgr->dll, "gr_frame");
+  }
+  FindClose(h);
+}
+
 int main(int argc, char **argv)
 {
   static BITMAPINFO bi = { sizeof(BITMAPINFOHEADER), 0, 0, 1, 32 };
@@ -222,7 +217,17 @@ int main(int argc, char **argv)
   HWND hw;
   HDC dc;
   u32 xwin, ywin;
-  int ret;
+  int ret = 0;
+  char dllfile[MAX_PATH];
+  char tmpfile[MAX_PATH];
+
+  if (argc < 2) {
+    puts("usage: dllfile");
+    return 1;
+  }
+
+  gr_w32_getpaths(argv[1], dllfile, tmpfile);
+  gr_w32_reload(&wgr, dllfile, tmpfile);
 
   CreateThread(0, 0, gr_w32_winloop, &wgr, 0, 0);
 
@@ -238,8 +243,8 @@ int main(int argc, char **argv)
   hw = wgr.hw;
   _ReadWriteBarrier();
 
-  if (gr_setup((struct gr_ctx *)&wgr, argc, argv) != 0)
-    return 1;
+  if ((ret = wgr.setup((struct gr_ctx *)&wgr, argc, argv)) != 0)
+    goto quit;
 
   bi.bmiHeader.biWidth = (LONG)wgr.xres;
   bi.bmiHeader.biHeight = -(LONG)wgr.yres;
@@ -261,12 +266,21 @@ int main(int argc, char **argv)
     wgr.xwin = xwin;
     wgr.ywin = ywin;
 
-    if ((ret = gr_frame((struct gr_ctx *)&wgr)) != 0)
-      return ret;
+    gr_w32_reload(&wgr, dllfile, tmpfile);
+
+    if ((ret = wgr.frame((struct gr_ctx *)&wgr)) != 0)
+      goto quit;
 
     StretchDIBits(dc, 0, 0, xwin, ywin, 0, 0, wgr.xres, wgr.yres, wgr.fb, &bi,
                   DIB_RGB_COLORS, SRCCOPY);
     ValidateRect(hw, 0);
   }
+
+quit:
+  /*if (tmpcreated) {
+    if (wgr.dll)
+      FreeLibrary(wgr.dll);
+    DeleteFileA(tmpfile);
+  }*/
+  return ret;
 }
-#endif

@@ -1,5 +1,4 @@
 #include <stdio.h>
-#define GR_IMPL
 #include "gr.h"
 
 #define XRES 640
