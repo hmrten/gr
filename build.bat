@@ -9,7 +9,6 @@ set libs=kernel32.lib user32.lib gdi32.lib winmm.lib
 if not exist out mkdir out
 pushd out
 del dll_*.pdb >nul 2>&1
-del *.tmp >nul 2>&1
 echo 1 > pdb.lock
 cl %cflags% ..\src\demo1.c -LD -Fedemo1.dll -link %lflags_dll%
 del pdb.lock

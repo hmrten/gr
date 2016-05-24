@@ -173,35 +173,59 @@ static void gr_w32_getpaths(const char *dllname, char *dllfile, char *dlltmpfile
 {
   DWORD n = GetModuleFileNameA(GetModuleHandle(0), dllfile, MAX_PATH);
   dllfile[MAX_PATH-1] = 0;
+
   while (n > 1 && dllfile[n] != '\\') --n;
-  dllfile[n] = 0;
-  GetTempFileNameA(dllfile, "gr", 0, dlltmpfile);
   dllfile[n++] = '\\';
-  while (*dllname && n < MAX_PATH-1) dllfile[n++] = *dllname++;
+
+  memcpy(dlltmpfile, dllfile, n);
+  dlltmpfile = dlltmpfile + n;
+  *dlltmpfile++ = '_';
+
+  while (*dllname && n < MAX_PATH-2) {
+    char c = *dllname++;
+    dllfile[n++] = c;
+    *dlltmpfile++ = c;
+  }
+
+  *dlltmpfile = 0;
   dllfile[n] = 0;
 }
 
-static void gr_w32_reload(struct gr_w32_ctx *wgr, const char *dllfile,
+enum gr_reload_err {
+  GR_RELOAD_LOCKED = 1,
+  GR_RELOAD_NOTFOUND,
+  GR_RELOAD_FAILED,
+  GR_RELOAD_NOPROC
+};
+
+static int gr_w32_reload(struct gr_w32_ctx *wgr, const char *dllfile,
                           const char *dlltmpfile)
 {
   static FILETIME savedtime;
   WIN32_FIND_DATA fd;
   HANDLE h;
 
-  if (GetFileAttributes("pdb.lock") != INVALID_FILE_ATTRIBUTES) return;
-  if ((h = FindFirstFile(dllfile, &fd)) == INVALID_HANDLE_VALUE) return;
+  if (GetFileAttributes("pdb.lock") != INVALID_FILE_ATTRIBUTES)
+    return GR_RELOAD_LOCKED;
+  if ((h = FindFirstFile(dllfile, &fd)) == INVALID_HANDLE_VALUE)
+    return GR_RELOAD_NOTFOUND;
 
   if (CompareFileTime(&fd.ftLastWriteTime, &savedtime) > 0) {
-    printf("reloading: %s\n", dllfile);
     savedtime = fd.ftLastWriteTime;
     if (wgr->dll)
       FreeLibrary(wgr->dll);
     CopyFile(dllfile, dlltmpfile, 0);
-    wgr->dll = LoadLibrary(dlltmpfile);
-    wgr->setup = (gr_setup_t)GetProcAddress(wgr->dll, "gr_setup");
-    wgr->frame = (gr_frame_t)GetProcAddress(wgr->dll, "gr_frame");
+    if (!(wgr->dll = LoadLibrary(dlltmpfile)))
+      return GR_RELOAD_FAILED;
+    if (!(wgr->setup = (gr_setup_t)GetProcAddress(wgr->dll, "gr_setup")))
+      return GR_RELOAD_NOPROC;
+    if (!(wgr->frame = (gr_frame_t)GetProcAddress(wgr->dll, "gr_frame")))
+      return GR_RELOAD_NOPROC;
+    printf("reload: loaded '%s'\n", dlltmpfile);
   }
   FindClose(h);
+
+  return 0;
 }
 
 int main(int argc, char **argv)
@@ -218,7 +242,7 @@ int main(int argc, char **argv)
   HWND hw;
   HDC dc;
   u32 xwin, ywin;
-  int ret = 0;
+  int ret = 0, err = 0;
   char dllfile[MAX_PATH];
   char dlltmpfile[MAX_PATH];
 
@@ -228,7 +252,21 @@ int main(int argc, char **argv)
   }
 
   gr_w32_getpaths(argv[1], dllfile, dlltmpfile);
-  gr_w32_reload(&wgr, dllfile, dlltmpfile);
+  err = gr_w32_reload(&wgr, dllfile, dlltmpfile);
+  switch (err) {
+  case GR_RELOAD_NOTFOUND:
+    fprintf(stderr, "reload: '%s' not found\n", dllfile);
+    return 1;
+  case GR_RELOAD_FAILED:
+    fprintf(stderr, "reload: LoadLibrary(\"%s\") failed\n", dlltmpfile);
+    return 1;
+  case GR_RELOAD_NOPROC:
+    fprintf(stderr, "reload: gr_setup and/or gr_frame procs not found\n");
+    return 1;
+  case GR_RELOAD_LOCKED:
+    fprintf(stderr, "reload: pdb locked on first load\n");
+    return 1;
+  }
 
   CreateThread(0, 0, gr_w32_winloop, &wgr, 0, 0);
 
