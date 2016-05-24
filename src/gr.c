@@ -8,16 +8,16 @@ typedef int (*gr_frame_t)(struct gr_ctx *);
 
 struct gr_w32_ctx {
   struct gr_ctx;
-  HMODULE  dll;
-  int    (*setup)(struct gr_ctx *, int, char **);
-  int    (*frame)(struct gr_ctx *);
-  WNDCLASS wc;
-  HWND     hw;
-  HDC      dc;
-  u32      winsz;
-  u32      qhead;
-  u32      qdata[256][2];
-  u32      qtail;
+  HMODULE    dll;
+  gr_setup_t setup;
+  gr_frame_t frame;
+  WNDCLASS   wc;
+  HWND       hw;
+  HDC        dc;
+  u32        winsz;
+  u32        qhead;
+  u32        qdata[256][2];
+  u32        qtail;
 };
 
 static void gr_w32_wintext(struct gr_ctx *gr, const char *text)
@@ -67,7 +67,7 @@ static int gr_w32_addevent(struct gr_ctx *gr, u32 ev, u32 ep)
   return 1;
 }
 
-static u32 gr_w32_event(struct gr_ctx *gr, u32 *ep)
+static u32 gr_w32_getevent(struct gr_ctx *gr, u32 *ep)
 {
   struct gr_w32_ctx *w32 = (struct gr_w32_ctx *)gr;
   u32 head = w32->qhead;
@@ -209,7 +209,8 @@ int main(int argc, char **argv)
   static BITMAPINFO bi = { sizeof(BITMAPINFOHEADER), 0, 0, 1, 32 };
   static struct gr_w32_ctx wgr = {
     .config = gr_w32_config,
-    .event = gr_w32_event,
+    .event = gr_w32_getevent,
+    .wintext = gr_w32_wintext,
     .winsize = gr_w32_winsize
   };
   LARGE_INTEGER tbase, tlast, tnow;

@@ -13,5 +13,5 @@ del *.tmp >nul 2>&1
 echo 1 > pdb.lock
 cl %cflags% ..\src\demo1.c -LD -Fedemo1.dll -link %lflags_dll%
 del pdb.lock
-cl %cflags% ..\src\gr_w32.c -Fegr.exe -link -subsystem:console %lflags% %libs%
+cl %cflags% ..\src\gr.c -Fegr.exe -link -subsystem:console %lflags% %libs%
 popd

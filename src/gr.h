@@ -39,6 +39,7 @@ struct gr_ctx {
   double dt;
   void (*config)(struct gr_ctx *, size_t, u32, u32, const char *);
   u32  (*event)(struct gr_ctx *, u32 *);
+  void (*wintext)(struct gr_ctx *, const char *);
   void (*winsize)(struct gr_ctx *, u32, u32);
 };
 
